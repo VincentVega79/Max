@@ -119,13 +119,13 @@
 <div id="crt-screen">
   <div id="screen-content">
     <div class="cpc-header">
-      Schneider & Amstrad 128K Microcomputer  (v4.0 - GITHUB CLOUD)<br>
+      Schneider & Amstrad 128K Microcomputer  (v4.2 - GITHUB CLOUD)<br>
       <span class="cpc-cyan">Locomotive BASIC v1.1  -  ZENTRALLAGER LIVE-SYNC</span><br><br>
       AMSDOS 0.5  -  LAGERBESTAND-ABFRAGESYSTEM (HAUPTLAGER + B-HALLE)<br>
       STATUS: <span id="db-status" class="cpc-white">INITIALISIERUNG...</span><br>
       GITHUB: <span id="gh-status" class="cpc-cyan">PRÜFE VERBINDUNG...</span>
     </div>
-    <div id="log">Ready<br>SUCHE   : "MR46", "DRUCKER", "B-HALLE", "S007", "S009"<br>ENTNAHME: "OUT &lt;S/N ODER ARTIKEL&gt;" (Z.B. "OUT Q3AC-66Q3-NFTZ" ODER "OUT MA-ANT-3-D6")<br>GITHUB  : "SYNC" (NEU LADEN), "TOKEN &lt;PAT&gt;", "SETUP &lt;USER/REPO&gt;"<br>SYSTEM  : "HILFE", "UNDO", "PROTOKOLL", "CLS", "EXIT"<br></div>
+    <div id="log">Ready<br>SUCHE   : "MR46", "DRUCKER", "B-HALLE", "S007", "S009"<br>ENTNAHME: "OUT &lt;S/N ODER ARTIKEL&gt;" (Z.B. "OUT Q3AC-66Q3-NFTZ" ODER "OUT MA-ANT-3-D6")<br>GITHUB  : "SYNC", "PUSH", "TOKEN &lt;PAT&gt;"<br>SYSTEM  : "HILFE", "UNDO", "PROTOKOLL", "CLS", "EXIT"<br></div>
     <div class="command-line">
       <span id="prompt-text" class="prompt-label">Ready</span>
       <div class="input-wrapper">
@@ -137,13 +137,13 @@
 </div>
 <script>
 // ============================================================================
-// HIER DEINE GITHUB-DATEN EINTRAGEN (ODER IM TERMINAL PER "SETUP user/repo"):
+// GITHUB REPOSITORY KONFIGURATION (VincentVega79 / Max)
 // ============================================================================
 const GITHUB_CONFIG = {
-  owner: "VincentVega79",   // z.B. "maxmustermann"
-  repo: "VincentVega79/Max",          // z.B. "cpc-lagerbestand"
-  branch: "main",                  // "main" oder "master"
-  dataFile: "bestand.json"         // Datei wird automatisch im Repo erstellt
+  owner: "VincentVega79",
+  repo: "Max",
+  branch: "main",
+  dataFile: "bestand.json"
 };
 
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -216,10 +216,9 @@ const DEFAULT_RAW_DATA = [
   ["CX942 (Drucker)",1,"75643421G2NLC","B-Halle","BX-07-01 [Pal. 91]"]
 ];
 
-const STORAGE_KEY = 'cpc_inventory_v40';
-const LOG_KEY = 'cpc_withdraw_log_v40';
+const STORAGE_KEY = 'cpc_inventory_v42';
+const LOG_KEY = 'cpc_withdraw_log_v42';
 const TOKEN_KEY = 'cpc_gh_token';
-const REPO_KEY = 'cpc_gh_repo';
 
 let RAW_DATA = [];
 let withdrawLog = [];
@@ -235,30 +234,6 @@ const ghStatus = document.getElementById('gh-status');
 const crt = document.getElementById('crt-screen');
 const promptText = document.getElementById('prompt-text');
 
-function getRepoConfig() {
-  const savedRepo = localStorage.getItem(REPO_KEY);
-  let owner = GITHUB_CONFIG.owner;
-  let repo = GITHUB_CONFIG.repo;
-  if (savedRepo && savedRepo.includes('/')) {
-    const parts = savedRepo.split('/');
-    owner = parts[0].trim();
-    repo = parts[1].trim();
-  }
-  // Automatische Erkennung, falls auf github.io gehostet:
-  if ((owner === "DEIN_GITHUB_USERNAME" || !owner) && window.location.hostname.endsWith('github.io')) {
-    owner = window.location.hostname.split('.')[0];
-    const pathParts = window.location.pathname.split('/').filter(Boolean);
-    if (pathParts.length > 0) repo = pathParts[0];
-  }
-  return {
-    owner,
-    repo,
-    branch: GITHUB_CONFIG.branch || 'main',
-    dataFile: GITHUB_CONFIG.dataFile || 'bestand.json',
-    token: localStorage.getItem(TOKEN_KEY) || ''
-  };
-}
-
 function utf8ToBase64(str) {
   return btoa(unescape(encodeURIComponent(str)));
 }
@@ -267,74 +242,96 @@ function base64ToUtf8(b64) {
   return decodeURIComponent(escape(atob(b64.replace(/\s/g, ''))));
 }
 
+function getStoredToken() {
+  return (localStorage.getItem(TOKEN_KEY) || '').trim();
+}
+
 async function syncFromGitHub(silent = false) {
-  const cfg = getRepoConfig();
-  if (!cfg.owner || cfg.owner === "DEIN_GITHUB_USERNAME" || !cfg.repo || cfg.repo === "DEIN_REPO_NAME") {
-    ghStatus.textContent = "LOKAL (BITTE 'SETUP USER/REPO' UND 'TOKEN <PAT>' EINGEBEN)";
-    return false;
+  const token = getStoredToken();
+  const owner = GITHUB_CONFIG.owner;
+  const repo = GITHUB_CONFIG.repo;
+  const dataFile = GITHUB_CONFIG.dataFile;
+
+  ghStatus.textContent = `VERBINDE MIT ${owner}/${repo}...`;
+  const url = `https://api.github.com/repos/${owner}/${repo}/contents/${dataFile}`;
+  
+  const headers = {
+    'Accept': 'application/vnd.github.v3+json'
+  };
+  if (token) {
+    headers['Authorization'] = `token ${token}`;
   }
 
-  ghStatus.textContent = `VERBINDE MIT ${cfg.owner}/${cfg.repo}...`;
-  const url = `https://api.github.com/repos/${cfg.owner}/${cfg.repo}/contents/${cfg.dataFile}?ref=${cfg.branch}&t=${Date.now()}`;
-  const headers = { 'Accept': 'application/vnd.github.v3+json' };
-  if (cfg.token) headers['Authorization'] = `Bearer ${cfg.token}`;
-
   try {
-    const res = await fetch(url, { headers, cache: 'no-store' });
+    const res = await fetch(url, { method: 'GET', headers: headers });
+
     if (res.status === 404) {
-      ghStatus.textContent = `BEREIT (${cfg.owner}/${cfg.repo} - NOCH KEINE bestand.json)`;
-      if (cfg.token) {
-        if (!silent) print("ERSTELLE INITIALE 'bestand.json' AUF GITHUB...");
-        await pushToGitHub("Initialer Lagerbestand (897 Datensaetze / 1612 Artikel)");
-      }
+      ghStatus.textContent = "DATEI FEHLT (bestand.json nicht im Repo)";
+      if (!silent) print("HINWEIS: 'bestand.json' existiert noch nicht im Repo. Bitte 'PUSH' eingeben.\nReady");
       return false;
     }
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+    if (res.status === 401 || res.status === 403) {
+      ghStatus.textContent = `TOKEN UNGÜLTIG / ABGELAUFEN (${res.status})`;
+      if (!silent) print(`FEHLER ${res.status}: Bitte neues Token mit 'TOKEN ghp_...' eingeben!\nReady`);
+      return false;
+    }
+
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
 
     const data = await res.json();
     currentFileSha = data.sha;
-    const contentObj = JSON.parse(base64ToUtf8(data.content));
 
+    const rawContent = base64ToUtf8(data.content).trim();
+    if (rawContent === "{}" || !rawContent) {
+      ghStatus.textContent = "INITIALISIERE REPO...";
+      await pushToGitHub("Initialer Lagerbestand (897 Datensaetze / 1612 Artikel)");
+      return true;
+    }
+
+    const contentObj = JSON.parse(rawContent);
     if (Array.isArray(contentObj.inventory)) {
       RAW_DATA = contentObj.inventory;
       withdrawLog = Array.isArray(contentObj.withdrawLog) ? contentObj.withdrawLog : [];
       saveToLocalStorage();
       const syncTime = new Date().toLocaleTimeString('de-DE');
-      ghStatus.textContent = `LIVE VERBUNDEN (${cfg.owner}/${cfg.repo} | SYNC: ${syncTime}) ${cfg.token ? '[SCHREIBRECHTE]' : '[NUR LESEN]'}`;
+      ghStatus.textContent = `LIVE VERBUNDEN (${syncTime})`;
       if (!silent) {
         print(`GITHUB SYNC ERFOLGREICH: ${RAW_DATA.length} Datensätze geladen.\nReady`);
       }
       return true;
     }
   } catch (err) {
-    ghStatus.textContent = `OFFLINE / FEHLER (${err.message})`;
-    if (!silent) print(`GITHUB SYNC FEHLER: ${err.message}\nReady`);
+    ghStatus.textContent = "OFFLINE / VERBINDUNGSFEHLER";
+    if (!silent) print(`NETZWERKFEHLER: Anfrage an api.github.com wurde blockiert (${err.message}).\nReady`);
   }
   return false;
 }
 
 async function pushToGitHub(commitMsg) {
-  const cfg = getRepoConfig();
-  if (!cfg.token) {
-    print("HINWEIS: Lokal gespeichert. Für GitHub-Upload bitte einmalig 'TOKEN <PAT>' eingeben!");
-    return false;
-  }
-  if (!cfg.owner || cfg.owner === "DEIN_GITHUB_USERNAME") {
-    print("HINWEIS: Bitte erst 'SETUP <USER>/<REPO>' eingeben!");
+  const token = getStoredToken();
+  if (!token) {
+    print("FEHLER: Kein Token hinterlegt! Bitte 'TOKEN ghp_...' eingeben.");
     return false;
   }
 
+  const owner = GITHUB_CONFIG.owner;
+  const repo = GITHUB_CONFIG.repo;
+  const branch = GITHUB_CONFIG.branch;
+  const dataFile = GITHUB_CONFIG.dataFile;
+
   ghStatus.textContent = "SPEICHERE AUF GITHUB...";
-  const apiUrl = `https://api.github.com/repos/${cfg.owner}/${cfg.repo}/contents/${cfg.dataFile}`;
+  const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${dataFile}`;
   const headers = {
     'Accept': 'application/vnd.github.v3+json',
-    'Authorization': `Bearer ${cfg.token}`,
+    'Authorization': `token ${token}`,
     'Content-Type': 'application/json'
   };
 
   try {
-    // Aktuellen SHA holen, falls ein anderer Kollege zwischendurch gespeichert hat
-    const getRes = await fetch(`${apiUrl}?ref=${cfg.branch}&t=${Date.now()}`, { headers, cache: 'no-store' });
+    const getRes = await fetch(apiUrl, { headers: { 'Accept': 'application/vnd.github.v3+json', 'Authorization': `token ${token}` } });
     if (getRes.ok) {
       const getJson = await getRes.json();
       currentFileSha = getJson.sha;
@@ -349,30 +346,30 @@ async function pushToGitHub(commitMsg) {
     const body = {
       message: commitMsg || "Lagerbestand aktualisiert",
       content: utf8ToBase64(JSON.stringify(payloadObj)),
-      branch: cfg.branch
+      branch: branch
     };
     if (currentFileSha) body.sha = currentFileSha;
 
     const putRes = await fetch(apiUrl, {
       method: 'PUT',
-      headers,
+      headers: headers,
       body: JSON.stringify(body)
     });
 
     if (!putRes.ok) {
-      const errData = await putRes.json();
-      throw new Error(errData.message || `HTTP ${putRes.status}`);
+      const errData = await putRes.json().catch(() => ({}));
+      throw new Error(`HTTP ${putRes.status}: ${errData.message || putRes.statusText}`);
     }
 
     const putJson = await putRes.json();
     currentFileSha = putJson.content.sha;
     const syncTime = new Date().toLocaleTimeString('de-DE');
-    ghStatus.textContent = `LIVE GESPEICHERT (${cfg.owner}/${cfg.repo} | ${syncTime})`;
-    print(">>> GITHUB CLOUD-SYNC ERFOLGREICH! ALLE KOLLEGEN SEHEN DEN NEUEN STAND. <<<");
+    ghStatus.textContent = `LIVE GESPEICHERT (${syncTime})`;
+    print(">>> GITHUB CLOUD-SYNC ERFOLGREICH! <<<");
     return true;
   } catch (err) {
     ghStatus.textContent = `SYNC-FEHLER (${err.message})`;
-    print(`!!! GITHUB SPEICHERFEHLER: ${err.message} (Lokal aber gespeichert) !!!`);
+    print(`!!! GITHUB FEHLER: ${err.message} !!!`);
     return false;
   }
 }
@@ -497,7 +494,7 @@ async function executeWithdrawal(rawIndex, qtyToRemove) {
   setTimeout(() => playPsgSound(1046, 0.15), 160);
 
   print("==================================================");
-  print(`>>> ENTNAHME ERFOLGREICH GEBUCHT <<<`);
+  print(">>> ENTNAHME ERFOLGREICH GEBUCHT <<<");
   print(`ARTIKEL  : ${model}`);
   if (sn && sn !== '-' && sn !== '0' && sn !== '00' && sn !== '000') {
     print(`S/N      : ${sn}`);
@@ -624,7 +621,7 @@ async function handleInteractiveStep(input) {
     setTimeout(() => playPsgSound(1046, 0.15), 160);
 
     print("==================================================");
-    print(`>>> ENTNAHME ERFOLGREICH GEBUCHT <<<`);
+    print(">>> ENTNAHME ERFOLGREICH GEBUCHT <<<");
     print(`ARTIKEL  : ${groupInfo.model}`);
     print(`LAGERORT : ${groupInfo.schrank} -> ${groupInfo.fach}`);
     print(`ENTNOMMEN: -${qty} Stk.`);
@@ -756,7 +753,6 @@ async function runQuery(raw) {
   let query = raw.trim();
   if (!query) return;
 
-  // Token-Eingabe im Log maskieren
   if (query.toUpperCase().startsWith('TOKEN ')) {
     print(`Ready TOKEN ****************`);
   } else {
@@ -765,7 +761,6 @@ async function runQuery(raw) {
 
   let upper = query.toUpperCase();
 
-  // GitHub Token setzen
   if (upper.startsWith('TOKEN ')) {
     const tokenVal = query.substring(6).trim();
     if (!tokenVal) {
@@ -776,20 +771,6 @@ async function runQuery(raw) {
     localStorage.setItem(TOKEN_KEY, tokenVal);
     playPsgSound(880, 0.1);
     print("GITHUB TOKEN GESPEICHERT! PRÜFE VERBINDUNG...");
-    await syncFromGitHub(false);
-    return;
-  }
-
-  // GitHub Repo Setup per Befehl
-  if (upper.startsWith('SETUP ')) {
-    const repoVal = query.substring(6).trim();
-    if (!repoVal.includes('/')) {
-      print("SYNTAX: SETUP <GITHUB_USER>/<REPO_NAME> (z.B. SETUP max/lager)\nReady");
-      return;
-    }
-    localStorage.setItem(REPO_KEY, repoVal);
-    playPsgSound(880, 0.1);
-    print(`GITHUB REPOSITORY GESETZT AUF: ${repoVal}`);
     await syncFromGitHub(false);
     return;
   }
@@ -828,7 +809,7 @@ async function runQuery(raw) {
   }
 
   if (upper === 'HILFE' || upper === 'HELP') {
-    print("MÖGLICHE BEFEHLE:\n- ABFRAGE  : MR46, DRUCKER, MX822, B-HALLE, S007, S009\n- ENTNAHME : OUT <S/N>      (z.B. 'OUT Q3AC-66Q3-NFTZ' bucht S/N direkt aus)\n             OUT <ARTIKEL>  (z.B. 'OUT MA-ANT-3-D6' öffnet Auswahl & Mengenabfrage)\n- GITHUB   : TOKEN <PAT>    (Speichert GitHub Personal Access Token)\n             SETUP <U>/<R>  (Setzt GitHub User/Repo, z.B. 'SETUP max/lager')\n             SYNC           (Lädt Bestand frisch von GitHub)\n             PUSH           (Speichert aktuellen Stand manuell auf GitHub)\n- UNDO     : Macht die letzte Entnahme rückgängig (inkl. GitHub-Sync)\n- PROTOKOLL: Zeigt alle bisherigen Entnahmen an\n- RESET    : Setzt Bestand auf die 897 Original-Datensätze (1612 Artikel) zurück\n- SYSTEM   : CLS (LEEREN), EXIT (BEENDEN)\nReady");
+    print("MÖGLICHE BEFEHLE:\n- ABFRAGE  : MR46, DRUCKER, MX822, B-HALLE, S007, S009\n- ENTNAHME : OUT <S/N>      (z.B. 'OUT Q3AC-66Q3-NFTZ' bucht S/N direkt aus)\n             OUT <ARTIKEL>  (z.B. 'OUT MA-ANT-3-D6' öffnet Auswahl & Mengenabfrage)\n- GITHUB   : TOKEN <PAT>    (Speichert GitHub Token)\n             SYNC           (Lädt Bestand frisch von GitHub)\n             PUSH           (Speichert aktuellen Stand auf GitHub)\n- UNDO     : Macht die letzte Entnahme rückgängig (inkl. GitHub-Sync)\n- PROTOKOLL: Zeigt alle bisherigen Entnahmen an\n- RESET    : Setzt Bestand auf 897 Original-Datensätze (1612 Artikel) zurück\n- SYSTEM   : CLS (LEEREN), EXIT (BEENDEN)\nReady");
     return;
   }
 
